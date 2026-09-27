@@ -1,0 +1,1 @@
+"""ShootPlanner API package."""
