@@ -1,8 +1,6 @@
 import { Link, createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
-import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { AuthCard, Field, inputCls } from "@/components/layout/auth-ui";
+import { AuthCard } from "@/components/layout/auth-ui";
 
 export const Route = createFileRoute("/forgot-password")({
   head: () => ({
@@ -17,43 +15,17 @@ export const Route = createFileRoute("/forgot-password")({
 });
 
 function ForgotPage() {
-  const [email, setEmail] = useState("");
-  const [sent, setSent] = useState(false);
-  const submit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!/^\S+@\S+\.\S+$/.test(email)) {
-      toast.error("Please enter a valid email address");
-      return;
-    }
-    setSent(true);
-    toast.success("Reset link sent! Check your inbox.");
-  };
   return (
     <AuthCard title="Forgot password">
-      <form onSubmit={submit} className="space-y-5">
+      <div className="space-y-5">
         <p className="text-sm leading-6 text-muted-foreground">
-          {sent
-            ? `We've sent a reset link to ${email}. Check your inbox.`
-            : "No problem. Enter your email address and we will send you a link to choose a new password."}
+          Automated password reset is not available yet. Contact your workspace administrator to
+          restore access.
         </p>
-        <Field label="Email address">
-          <input
-            className={inputCls}
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            autoFocus
-          />
-        </Field>
-        <Button type="submit" size="lg" className="w-full">
-          Email password reset link
+        <Button asChild size="lg" className="w-full">
+          <Link to="/login">Back to login</Link>
         </Button>
-        <p className="text-center">
-          <Link to="/login" className="text-sm font-semibold text-primary-strong">
-            Back to login
-          </Link>
-        </p>
-      </form>
+      </div>
     </AuthCard>
   );
 }

@@ -1,4 +1,5 @@
-import { Link, useRouterState } from "@tanstack/react-router";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import {
   Bell,
   CalendarDays,
@@ -19,6 +20,7 @@ import type { ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { currentUserQuery, logout, type AuthUser } from "@/features/auth/auth-api";
 
 const primaryLinks = [
   { label: "Dashboard", to: "/dashboard", icon: Home },
@@ -52,7 +54,16 @@ function Brand({ dark = false }: { dark?: boolean }) {
   );
 }
 
-function SidebarContent() {
+function initials(name: string) {
+  return name
+    .split(" ")
+    .slice(0, 2)
+    .map((part) => part[0])
+    .join("")
+    .toUpperCase();
+}
+
+function SidebarContent({ user, onLogout }: { user: AuthUser; onLogout: () => void }) {
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const links = (items: typeof primaryLinks | typeof secondaryLinks) =>
     items.map(({ label, to, icon: Icon }) => {
@@ -77,15 +88,16 @@ function SidebarContent() {
       <div className="mt-auto border-t border-sidebar-border pt-4">
         <div className="mb-4 flex items-center gap-3">
           <div className="grid size-10 shrink-0 place-items-center rounded-full bg-primary-soft font-bold text-primary">
-            SN
+            {initials(user.name)}
           </div>
           <div className="min-w-0">
-            <p className="truncate text-sm font-bold text-sidebar-foreground">Shashika Neshan</p>
-            <p className="truncate text-xs text-sidebar-muted">hello@romance.lk</p>
+            <p className="truncate text-sm font-bold text-sidebar-foreground">{user.name}</p>
+            <p className="truncate text-xs text-sidebar-muted">{user.email}</p>
           </div>
         </div>
         <Button
           variant="ghost"
+          onClick={onLogout}
           className="w-full justify-start text-sidebar-muted hover:bg-sidebar-accent hover:text-sidebar-foreground"
         >
           <LogOut />
@@ -97,11 +109,23 @@ function SidebarContent() {
 }
 
 export function AppShell({ children, title }: { children: ReactNode; title: string }) {
+  const { data: user } = useQuery(currentUserQuery);
+  const queryClient = useQueryClient();
+  const navigate = useNavigate();
+
+  if (!user) return null;
+
+  const handleLogout = async () => {
+    await logout();
+    queryClient.removeQueries({ queryKey: currentUserQuery.queryKey });
+    await navigate({ to: "/login", replace: true });
+  };
+
   return (
     <TooltipProvider>
       <div className="min-h-screen bg-background lg:grid lg:grid-cols-[260px_minmax(0,1fr)]">
         <aside className="sticky top-0 hidden h-screen lg:block">
-          <SidebarContent />
+          <SidebarContent user={user} onLogout={() => void handleLogout()} />
         </aside>
         <div className="min-w-0">
           <header className="sticky top-0 z-30 grid h-16 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-border bg-card/95 px-4 backdrop-blur md:px-7">
@@ -115,13 +139,13 @@ export function AppShell({ children, title }: { children: ReactNode; title: stri
                   </SheetTrigger>
                   <SheetContent side="left" className="w-[290px] border-none bg-sidebar p-0">
                     <SheetTitle className="sr-only">Navigation</SheetTitle>
-                    <SidebarContent />
+                    <SidebarContent user={user} onLogout={() => void handleLogout()} />
                   </SheetContent>
                 </Sheet>
               </div>
               <div className="hidden lg:block">
                 <p className="truncate text-sm font-bold text-foreground">{title}</p>
-                <p className="text-xs text-muted-foreground">Romance Studio</p>
+                <p className="text-xs text-muted-foreground">{user.studio_name}</p>
               </div>
               <div className="lg:hidden">
                 <Brand />

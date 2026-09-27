@@ -1,0 +1,277 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: ShootPlanner FastAPI on EC2 with Aurora PostgreSQL Serverless v2
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+  PublicSubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Two or more public subnets for the load balancer
+  PrivateSubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Two or more private subnets with NAT access for EC2 and Aurora
+  CertificateArn:
+    Type: String
+    Description: ACM certificate ARN for the backend API domain
+  ContainerImage:
+    Type: String
+    Description: Full ECR image URI, including tag
+  FrontendOrigin:
+    Type: String
+    Description: Amplify custom origin, for example https://app.example.com
+  DatabaseName:
+    Type: String
+    Default: shootplanner
+  DatabaseUsername:
+    Type: String
+    Default: shootplanner_admin
+  InstanceType:
+    Type: String
+    Default: t3.small
+  LatestAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+
+Resources:
+  LoadBalancerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: HTTPS access to the ShootPlanner API load balancer
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+
+  BackendSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: FastAPI access from the load balancer only
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8000
+          ToPort: 8000
+          SourceSecurityGroupId: !Ref LoadBalancerSecurityGroup
+
+  DatabaseSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Aurora access from FastAPI only
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId: !Ref BackendSecurityGroup
+
+  DatabaseSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: ShootPlanner Aurora private subnets
+      SubnetIds: !Ref PrivateSubnetIds
+
+  DatabaseCluster:
+    Type: AWS::RDS::DBCluster
+    DeletionPolicy: Snapshot
+    UpdateReplacePolicy: Snapshot
+    Properties:
+      Engine: aurora-postgresql
+      DatabaseName: !Ref DatabaseName
+      DBSubnetGroupName: !Ref DatabaseSubnetGroup
+      MasterUsername: !Ref DatabaseUsername
+      ManageMasterUserPassword: true
+      StorageEncrypted: true
+      BackupRetentionPeriod: 7
+      DeletionProtection: true
+      CopyTagsToSnapshot: true
+      EnableCloudwatchLogsExports:
+        - postgresql
+      ServerlessV2ScalingConfiguration:
+        MinCapacity: 0.5
+        MaxCapacity: 4
+      VpcSecurityGroupIds:
+        - !Ref DatabaseSecurityGroup
+
+  DatabaseWriter:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBClusterIdentifier: !Ref DatabaseCluster
+      DBInstanceClass: db.serverless
+      Engine: aurora-postgresql
+
+  DatabaseReader:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBClusterIdentifier: !Ref DatabaseCluster
+      DBInstanceClass: db.serverless
+      Engine: aurora-postgresql
+
+  AuthSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Description: ShootPlanner JWT signing secret
+      GenerateSecretString:
+        SecretStringTemplate: '{}'
+        GenerateStringKey: auth_secret
+        PasswordLength: 64
+        ExcludePunctuation: true
+
+  BackendRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: ReadRuntimeSecretsAndImage
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource:
+                  - !GetAtt DatabaseCluster.MasterUserSecret.SecretArn
+                  - !Ref AuthSecret
+              - Effect: Allow
+                Action:
+                  - ecr:GetAuthorizationToken
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchGetImage
+                Resource: "*"
+
+  BackendInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref BackendRole
+
+  BackendLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateData:
+        ImageId: !Ref LatestAmiId
+        InstanceType: !Ref InstanceType
+        IamInstanceProfile:
+          Arn: !GetAtt BackendInstanceProfile.Arn
+        SecurityGroupIds:
+          - !Ref BackendSecurityGroup
+        MetadataOptions:
+          HttpEndpoint: enabled
+          HttpTokens: required
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            set -euo pipefail
+            dnf install -y docker jq
+            systemctl enable --now docker
+
+            DB_SECRET=$(aws secretsmanager get-secret-value --region ${AWS::Region} --secret-id '${DatabaseCluster.MasterUserSecret.SecretArn}' --query SecretString --output text)
+            AUTH_JSON=$(aws secretsmanager get-secret-value --region ${AWS::Region} --secret-id '${AuthSecret}' --query SecretString --output text)
+            DB_USER=$(echo "$DB_SECRET" | jq -r .username)
+            DB_PASSWORD=$(echo "$DB_SECRET" | jq -r .password)
+            AUTH_SECRET=$(echo "$AUTH_JSON" | jq -r .auth_secret)
+            DATABASE_URL=$(DB_USER="$DB_USER" DB_PASSWORD="$DB_PASSWORD" python3 -c "import os, urllib.parse; print('postgresql+asyncpg://' + urllib.parse.quote(os.environ['DB_USER'], safe='') + ':' + urllib.parse.quote(os.environ['DB_PASSWORD'], safe='') + '@${DatabaseCluster.Endpoint.Address}:5432/${DatabaseName}')")
+
+            IMAGE='${ContainerImage}'
+            REGISTRY=$(echo "$IMAGE" | cut -d/ -f1)
+            aws ecr get-login-password --region ${AWS::Region} | docker login --username AWS --password-stdin "$REGISTRY"
+            docker pull "$IMAGE"
+            docker run --rm \
+              -e ENVIRONMENT=production \
+              -e FRONTEND_ORIGIN='${FrontendOrigin}' \
+              -e DATABASE_URL="$DATABASE_URL" \
+              -e AUTH_SECRET_KEY="$AUTH_SECRET" \
+              "$IMAGE" alembic upgrade head
+            docker run -d --restart unless-stopped --name shootplanner-api -p 8000:8000 \
+              -e ENVIRONMENT=production \
+              -e FRONTEND_ORIGIN='${FrontendOrigin}' \
+              -e DATABASE_URL="$DATABASE_URL" \
+              -e AUTH_SECRET_KEY="$AUTH_SECRET" \
+              "$IMAGE"
+
+  LoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Scheme: internet-facing
+      SecurityGroups:
+        - !Ref LoadBalancerSecurityGroup
+      Subnets: !Ref PublicSubnetIds
+
+  BackendTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      VpcId: !Ref VpcId
+      Port: 8000
+      Protocol: HTTP
+      TargetType: instance
+      HealthCheckPath: /api/v1/health
+      Matcher:
+        HttpCode: "200"
+
+  HttpsListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref LoadBalancer
+      Port: 443
+      Protocol: HTTPS
+      Certificates:
+        - CertificateArn: !Ref CertificateArn
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref BackendTargetGroup
+
+  BackendAutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    UpdatePolicy:
+      AutoScalingRollingUpdate:
+        MinInstancesInService: 1
+        MaxBatchSize: 1
+        PauseTime: PT5M
+    DependsOn:
+      - DatabaseWriter
+      - HttpsListener
+    Properties:
+      MinSize: "1"
+      DesiredCapacity: "1"
+      MaxSize: "2"
+      VPCZoneIdentifier: !Ref PrivateSubnetIds
+      TargetGroupARNs:
+        - !Ref BackendTargetGroup
+      HealthCheckType: ELB
+      HealthCheckGracePeriod: 300
+      LaunchTemplate:
+        LaunchTemplateId: !Ref BackendLaunchTemplate
+        Version: !GetAtt BackendLaunchTemplate.LatestVersionNumber
+
+  BackendCpuScalingPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AutoScalingGroupName: !Ref BackendAutoScalingGroup
+      PolicyType: TargetTrackingScaling
+      TargetTrackingConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ASGAverageCPUUtilization
+        TargetValue: 60
+
+Outputs:
+  ApiLoadBalancerDnsName:
+    Value: !GetAtt LoadBalancer.DNSName
+  AuroraWriterEndpoint:
+    Value: !GetAtt DatabaseCluster.Endpoint.Address
+  AuroraReaderEndpoint:
+    Value: !GetAtt DatabaseCluster.ReadEndpoint.Address
+  DatabaseSecretArn:
+    Value: !GetAtt DatabaseCluster.MasterUserSecret.SecretArn

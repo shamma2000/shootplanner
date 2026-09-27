@@ -3,8 +3,11 @@ import { Check } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { z } from "zod";
+import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Field, PasswordInput, inputCls } from "@/components/layout/auth-ui";
+import { currentUserQuery, register } from "@/features/auth/auth-api";
+import { ApiError } from "@/lib/api";
 
 export const Route = createFileRoute("/signup")({
   head: () => ({
@@ -55,6 +58,7 @@ const perks = [
 
 function SignupPage() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [form, setForm] = useState<Form>({
     studio: "",
     subdomain: "",
@@ -65,6 +69,8 @@ function SignupPage() {
     confirm: "",
   });
   const [errors, setErrors] = useState<Partial<Record<keyof Form, string>>>({});
+  const [submitError, setSubmitError] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const set = (k: keyof Form) => (e: React.ChangeEvent<HTMLInputElement>) =>
     setForm((f) => ({
       ...f,
@@ -73,7 +79,7 @@ function SignupPage() {
           ? e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, "")
           : e.target.value,
     }));
-  const submit = (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     const r = schema.safeParse(form);
     if (!r.success) {
@@ -85,8 +91,27 @@ function SignupPage() {
       return;
     }
     setErrors({});
-    toast.success("Your studio workspace is ready!");
-    navigate({ to: "/dashboard" });
+    setSubmitError("");
+    setIsSubmitting(true);
+    try {
+      const user = await register({
+        studio_name: r.data.studio,
+        subdomain: r.data.subdomain,
+        name: r.data.name,
+        email: r.data.email,
+        phone: r.data.phone,
+        password: r.data.password,
+      });
+      queryClient.setQueryData(currentUserQuery.queryKey, user);
+      toast.success("Your studio workspace is ready!");
+      await navigate({ to: "/dashboard" });
+    } catch (requestError) {
+      setSubmitError(
+        requestError instanceof ApiError ? requestError.message : "Unable to create workspace",
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
   };
   return (
     <div className="min-h-screen bg-background">
@@ -194,8 +219,9 @@ function SignupPage() {
           <Field label="Confirm password" error={errors.confirm}>
             <PasswordInput value={form.confirm} onChange={set("confirm")} />
           </Field>
-          <Button type="submit" size="lg" className="w-full">
-            Create workspace
+          {submitError && <p className="text-sm font-semibold text-destructive">{submitError}</p>}
+          <Button type="submit" size="lg" className="w-full" disabled={isSubmitting}>
+            {isSubmitting ? "Creating workspace..." : "Create workspace"}
           </Button>
         </form>
       </main>

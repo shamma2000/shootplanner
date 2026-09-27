@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from app.core.config import settings
 from app.core.database import Base
+from app.modules.auth.model import Studio, User  # noqa: F401
 from app.modules.clients.model import Client  # noqa: F401
 from app.modules.events.model import Event  # noqa: F401
 from app.modules.invoices.model import Invoice  # noqa: F401

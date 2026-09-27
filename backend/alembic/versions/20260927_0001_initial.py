@@ -25,16 +25,46 @@ def timestamps() -> list[sa.Column]:
 
 def upgrade() -> None:
     op.create_table(
+        "studios",
+        *timestamps(),
+        sa.Column("name", sa.String(length=120), nullable=False),
+        sa.Column("subdomain", sa.String(length=63), nullable=False),
+        sa.PrimaryKeyConstraint("id"),
+        sa.UniqueConstraint("subdomain"),
+    )
+    op.create_index("ix_studios_subdomain", "studios", ["subdomain"], unique=True)
+
+    op.create_table(
+        "users",
+        *timestamps(),
+        sa.Column("studio_id", sa.Uuid(), nullable=False),
+        sa.Column("name", sa.String(length=120), nullable=False),
+        sa.Column("email", sa.String(length=255), nullable=False),
+        sa.Column("phone", sa.String(length=30), nullable=False),
+        sa.Column("password_hash", sa.String(length=255), nullable=False),
+        sa.Column("role", sa.String(length=30), nullable=False),
+        sa.Column("is_active", sa.Boolean(), nullable=False),
+        sa.ForeignKeyConstraint(["studio_id"], ["studios.id"], ondelete="CASCADE"),
+        sa.PrimaryKeyConstraint("id"),
+        sa.UniqueConstraint("email"),
+    )
+    op.create_index("ix_users_email", "users", ["email"], unique=True)
+    op.create_index("ix_users_studio_id", "users", ["studio_id"])
+
+    op.create_table(
         "clients",
         *timestamps(),
+        sa.Column("studio_id", sa.Uuid(), nullable=False),
         sa.Column("bride_name", sa.String(length=120), nullable=False),
         sa.Column("groom_name", sa.String(length=120), nullable=False),
         sa.Column("primary_phone", sa.String(length=30), nullable=False),
         sa.Column("optional_phone", sa.String(length=30), nullable=True),
         sa.Column("email", sa.String(length=255), nullable=True),
         sa.Column("address", sa.String(length=500), nullable=True),
+        sa.ForeignKeyConstraint(["studio_id"], ["studios.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
     )
+    op.create_index("ix_clients_studio_id", "clients", ["studio_id"])
     op.create_index("ix_clients_email", "clients", ["email"])
     op.create_index("ix_clients_primary_phone", "clients", ["primary_phone"])
 
@@ -90,3 +120,5 @@ def downgrade() -> None:
     op.drop_table("quotations")
     op.drop_table("events")
     op.drop_table("clients")
+    op.drop_table("users")
+    op.drop_table("studios")
