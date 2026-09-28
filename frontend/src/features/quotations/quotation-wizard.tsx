@@ -1,3 +1,4 @@
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { ArrowLeft, ArrowRight, CalendarIcon, Check, ChevronDown, Plus } from "lucide-react";
@@ -10,7 +11,14 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { formatLkr, packages } from "@/data/mock";
+import {
+  addOnsQuery,
+  createQuotationWorkflow,
+  packagesQuery,
+  type QuotationWorkflowPayload,
+} from "@/features/workspace/workspace-api";
+import { ApiError } from "@/lib/api";
+import { formatLkr } from "@/lib/format";
 
 const schema = z.object({
   brideName: z.string().min(2, "Bride name is required"),
@@ -24,6 +32,8 @@ const schema = z.object({
   engagementDate: z.string(),
   engagementLocation: z.string(),
   engagementHotel: z.string(),
+  preShootDate: z.string(),
+  preShootLocation: z.string(),
   packageId: z.string(),
   customName: z.string(),
   customPrice: z.coerce.number().min(0),
@@ -55,9 +65,14 @@ export function QuotationWizard() {
   const [step, setStep] = useState(1);
   const [eventType, setEventType] = useState<"Wedding" | "Other">("Wedding");
   const [service, setService] = useState("All");
+  const [showPreShoot, setShowPreShoot] = useState(false);
+  const [selectedAddOns, setSelectedAddOns] = useState<Set<string>>(new Set());
   const [drone, setDrone] = useState(false);
   const [transport, setTransport] = useState(false);
   const navigate = useNavigate({ from: "/dashboard/quotations/new" });
+  const queryClient = useQueryClient();
+  const packageQuery = useQuery(packagesQuery);
+  const addOnQuery = useQuery(addOnsQuery);
   const {
     register,
     handleSubmit,
@@ -66,35 +81,156 @@ export function QuotationWizard() {
   } = useForm<FormData>({
     resolver: zodResolver(schema),
     defaultValues: {
-      brideName: "Dinithi",
-      groomName: "Kasun",
-      primaryPhone: "077 123 4567",
+      brideName: "",
+      groomName: "",
+      primaryPhone: "",
       optionalPhone: "",
-      email: "dinithi@example.com",
-      weddingDate: "2026-11-21",
-      weddingLocation: "Colombo",
-      hotel: "Galle Face Hotel",
-      engagementDate: "2026-10-18",
-      engagementLocation: "Kandy",
-      engagementHotel: "Earl’s Regency",
-      packageId: "pkg-1",
+      email: "",
+      weddingDate: "",
+      weddingLocation: "",
+      hotel: "",
+      engagementDate: "",
+      engagementLocation: "",
+      engagementHotel: "",
+      preShootDate: "",
+      preShootLocation: "",
+      packageId: "",
       customName: "",
       customPrice: 0,
-      discount: 5000,
+      discount: 0,
       notes: "",
     },
   });
   const values = watch();
+  const packages = packageQuery.data ?? [];
+  const addOns = addOnQuery.data ?? [];
   const selected = packages.find((p) => p.id === values.packageId);
+  const selectedExtras = addOns.filter((item) => selectedAddOns.has(item.id));
   const estimate =
-    (selected?.price ?? 0) +
+    Number(selected?.base_price ?? 0) +
+    selectedExtras.reduce((sum, item) => sum + Number(item.default_price), 0) +
     (drone ? 25000 : 0) +
     (transport ? 15000 : 0) +
     (Number(values.customPrice) || 0) -
     (Number(values.discount) || 0);
-  const submit = handleSubmit(() => {
-    toast.success("Quotation created successfully!");
-    navigate({ to: "/dashboard/quotations" });
+  const saveQuotation = useMutation({
+    mutationFn: async (formValues: FormData) => {
+      const events: QuotationWorkflowPayload["events"] = [
+        {
+          event_type: eventType,
+          event_date: formValues.weddingDate,
+          location: formValues.weddingLocation.trim(),
+          hotel: formValues.hotel.trim() || null,
+        },
+      ];
+      if (formValues.engagementDate && formValues.engagementLocation.trim()) {
+        events.push({
+          event_type: "Engagement",
+          event_date: formValues.engagementDate,
+          location: formValues.engagementLocation.trim(),
+          hotel: formValues.engagementHotel.trim() || null,
+        });
+      }
+      if (showPreShoot && formValues.preShootDate && formValues.preShootLocation.trim()) {
+        events.push({
+          event_type: "Pre-shoot",
+          event_date: formValues.preShootDate,
+          location: formValues.preShootLocation.trim(),
+          hotel: null,
+        });
+      }
+
+      const selectedPackage = packages.find((item) => item.id === formValues.packageId);
+      const items: QuotationWorkflowPayload["items"] = [];
+      if (selectedPackage) {
+        items.push({
+          item_type: "package",
+          name: selectedPackage.name,
+          category: selectedPackage.service_type,
+          quantity: 1,
+          unit_price: Number(selectedPackage.base_price),
+        });
+        items.push(
+          ...selectedPackage.deliverables.map((name) => ({
+            item_type: "deliverable" as const,
+            name,
+            category: "Package deliverable",
+            quantity: 1,
+            unit_price: 0,
+          })),
+        );
+      }
+      items.push(
+        ...selectedExtras.map((item) => ({
+          item_type: "add_on" as const,
+          name: item.name,
+          category: item.add_on_type,
+          quantity: 1,
+          unit_price: Number(item.default_price),
+        })),
+      );
+      if (formValues.customName.trim() && Number(formValues.customPrice) > 0) {
+        items.push({
+          item_type: "custom",
+          name: formValues.customName.trim(),
+          category: "Custom package",
+          quantity: 1,
+          unit_price: Number(formValues.customPrice),
+        });
+      }
+      if (drone) {
+        items.push({
+          item_type: "add_on",
+          name: "Drone shoot",
+          category: "General",
+          quantity: 1,
+          unit_price: 25000,
+        });
+      }
+      if (transport) {
+        items.push({
+          item_type: "transport",
+          name: "Transport / mileage",
+          category: "Travel",
+          quantity: 1,
+          unit_price: 15000,
+        });
+      }
+
+      return createQuotationWorkflow({
+        client: {
+          bride_name: formValues.brideName.trim(),
+          groom_name: formValues.groomName.trim(),
+          primary_phone: formValues.primaryPhone.trim(),
+          optional_phone: formValues.optionalPhone.trim() || null,
+          email: formValues.email.trim() || null,
+          address: null,
+        },
+        events,
+        items,
+        discount: Number(formValues.discount) || 0,
+        service_type: service,
+        notes: formValues.notes.trim() || null,
+        status: "Draft",
+      });
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["workspace"] });
+      toast.success("Quotation saved to your workspace");
+      await navigate({ to: "/dashboard/quotations" });
+    },
+    onError: (error) => {
+      toast.error(error instanceof ApiError ? error.message : "Unable to save quotation");
+    },
+  });
+  const submit = handleSubmit((formValues) => {
+    const hasCustomPackage =
+      formValues.customName.trim().length > 0 && Number(formValues.customPrice) > 0;
+    if (!selected && !hasCustomPackage) {
+      toast.error("Select a package or add a custom package and price");
+      return;
+    }
+    saveQuotation.mutate(formValues);
   });
   return (
     <form
@@ -196,21 +332,37 @@ export function QuotationWizard() {
           <Section
             title="Pre-shoot sessions"
             action={
-              <Button type="button" variant="outline" size="sm">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setShowPreShoot((current) => !current)}
+              >
                 <Plus />
-                Add pre-shoot
+                {showPreShoot ? "Remove" : "Add pre-shoot"}
               </Button>
             }
           >
-            <div className="rounded-lg border border-dashed border-border bg-muted/50 p-7 text-center">
-              <CalendarIcon className="mx-auto size-7 text-muted-foreground" />
-              <p className="mt-3 text-sm font-semibold text-foreground">
-                No pre-shoot sessions added.
-              </p>
-              <p className="mt-1 text-xs text-muted-foreground">
-                Click “Add pre-shoot” above to add one.
-              </p>
-            </div>
+            {showPreShoot ? (
+              <div className="grid gap-4 md:grid-cols-2">
+                <Field label="Pre-shoot date">
+                  <Input type="date" {...register("preShootDate")} />
+                </Field>
+                <Field label="Shoot location">
+                  <Input {...register("preShootLocation")} />
+                </Field>
+              </div>
+            ) : (
+              <div className="rounded-lg border border-dashed border-border bg-muted/50 p-7 text-center">
+                <CalendarIcon className="mx-auto size-7 text-muted-foreground" />
+                <p className="mt-3 text-sm font-semibold text-foreground">
+                  No pre-shoot sessions added.
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Click “Add pre-shoot” above to add one.
+                </p>
+              </div>
+            )}
           </Section>
         </div>
       ) : (
@@ -262,14 +414,18 @@ export function QuotationWizard() {
                       <option value="">Choose a package</option>
                       {packages.map((p) => (
                         <option key={p.id} value={p.id}>
-                          {p.name} — {formatLkr(p.price)}
+                          {p.name} - {formatLkr(Number(p.base_price))}
                         </option>
                       ))}
                     </select>
                     <ChevronDown className="pointer-events-none absolute right-3 top-3.5 size-4" />
                   </div>
                 </Field>
-                <Button type="button" className="self-end">
+                <Button
+                  type="button"
+                  className="self-end"
+                  onClick={() => navigate({ to: "/dashboard/packages" })}
+                >
                   <Plus />
                   Add package
                 </Button>
@@ -282,6 +438,23 @@ export function QuotationWizard() {
               </div>
             </Section>
             <Section title="Extras">
+              {addOns.map((item) => (
+                <CheckRow
+                  key={item.id}
+                  checked={selectedAddOns.has(item.id)}
+                  setChecked={(checked) =>
+                    setSelectedAddOns((current) => {
+                      const next = new Set(current);
+                      if (checked) next.add(item.id);
+                      else next.delete(item.id);
+                      return next;
+                    })
+                  }
+                  title={item.name}
+                  copy={item.add_on_type}
+                  price={formatLkr(Number(item.default_price))}
+                />
+              ))}
               <CheckRow
                 checked={drone}
                 setChecked={setDrone}
@@ -354,8 +527,8 @@ export function QuotationWizard() {
               <ArrowRight className="size-4" />
             </button>
           ) : (
-            <Button type="submit">
-              Create quotation
+            <Button type="submit" disabled={saveQuotation.isPending}>
+              {saveQuotation.isPending ? "Saving..." : "Create quotation"}
               <ArrowRight />
             </Button>
           )}

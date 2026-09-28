@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from sqlalchemy import Boolean, ForeignKey, String, Uuid
+from sqlalchemy import Boolean, ForeignKey, String, Text, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base, EntityMixin
@@ -11,6 +11,15 @@ class Studio(EntityMixin, Base):
 
     name: Mapped[str] = mapped_column(String(120))
     subdomain: Mapped[str] = mapped_column(String(63), unique=True, index=True)
+    phone: Mapped[str | None] = mapped_column(String(30))
+    email: Mapped[str | None] = mapped_column(String(255))
+    address: Mapped[str | None] = mapped_column(Text)
+    brand_color_primary: Mapped[str | None] = mapped_column(String(7))
+    brand_color_secondary: Mapped[str | None] = mapped_column(String(7))
+    bank_name: Mapped[str | None] = mapped_column(String(120))
+    bank_account_holder: Mapped[str | None] = mapped_column(String(120))
+    bank_account_number: Mapped[str | None] = mapped_column(String(80))
+    bank_branch: Mapped[str | None] = mapped_column(String(120))
 
 
 class User(EntityMixin, Base):

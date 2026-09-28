@@ -2,6 +2,9 @@
 
 FastAPI backend for ShootPlanner, using async SQLAlchemy and PostgreSQL.
 
+The FastAPI application uses SQLAlchemy as its ORM and Alembic for database
+migrations.
+
 ## Run locally
 
 Python 3.12+ and PostgreSQL are required. From this directory, run:
@@ -24,6 +27,10 @@ uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 
 The API is available at `http://localhost:8000`; Swagger documentation is at
 `http://localhost:8000/docs`.
+
+When using Supabase, set `DATABASE_URL` to the transaction-mode pooler URL on
+port `6543` and `DIRECT_URL` to the session-mode URL on port `5432`. FastAPI
+uses `DATABASE_URL`; Alembic uses `DIRECT_URL`.
 
 ## Structure
 

@@ -32,6 +32,15 @@ PostgreSQL; only the Python backend receives database credentials.
 
 Open a terminal at the repository root:
 
+First confirm Python is installed:
+
+```powershell
+py --version
+```
+
+If this command reports that Python is missing, install Python 3.12 or newer
+and enable the installer option that adds the Python launcher to PATH.
+
 ```powershell
 cd backend
 py -m venv .venv
@@ -68,6 +77,89 @@ Backend URLs:
 - Swagger documentation: `http://localhost:8000/docs`
 - Health check: `http://localhost:8000/api/v1/health`
 
+Keep this terminal open while using the application. A successful startup ends
+with output similar to:
+
+```text
+Uvicorn running on http://127.0.0.1:8000
+```
+
+### Verify the database connection
+
+The migration command is the first database connection check:
+
+```powershell
+cd backend
+.venv\Scripts\Activate.ps1
+alembic current
+alembic upgrade head
+```
+
+If it succeeds, PostgreSQL should contain these authentication tables:
+
+```text
+studios
+users
+clients
+events
+quotations
+invoices
+alembic_version
+```
+
+You can also open `http://localhost:8000/docs`, run `GET /api/v1/health`, and
+then create the first account with `POST /api/v1/auth/register`.
+
+### Using the configured Supabase PostgreSQL database
+
+`backend/.env` contains separate Supabase pooler URLs:
+
+- `DATABASE_URL` uses transaction mode on port `6543` for FastAPI.
+- `DIRECT_URL` uses session mode on port `5432` for Alembic migrations.
+
+Before starting the backend, replace `[YOUR-PASSWORD]` in both values with the
+database password from the Supabase dashboard. Percent-encode reserved URL
+characters in the password, such as `@`, `:`, `/`, `#`, `?`, and `%`.
+
+Then run:
+
+```powershell
+cd backend
+.venv\Scripts\Activate.ps1
+alembic upgrade head
+uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+The transaction pooler does not support prepared statements. The backend
+therefore disables the asyncpg and SQLAlchemy prepared-statement caches and
+uses `NullPool`; Alembic always selects `DIRECT_URL`.
+
+### Verify registration and login
+
+After both applications are running:
+
+1. Open `http://localhost:3000/signup`.
+2. Create a studio owner account.
+3. Confirm that one row was added to both `studios` and `users`.
+4. Log out and sign in again at `http://localhost:3000/login`.
+5. Open `http://localhost:8000/docs` and check `GET /api/v1/auth/me` if API
+   debugging is needed.
+
+Passwords are never stored directly. The database stores only an Argon2 hash
+in `users.password_hash`.
+
+### Common backend errors
+
+- `py is not recognized`: install Python 3.12+ and reopen the terminal.
+- `connection refused`: start PostgreSQL and confirm it is listening on port
+  `5432`.
+- `password authentication failed`: make the username and password in
+  `DATABASE_URL` match PostgreSQL.
+- `database "shootplanner" does not exist`: create the database before running
+  Alembic.
+- Browser CORS or cookie errors: confirm `FRONTEND_ORIGIN` exactly matches the
+  frontend URL and `VITE_API_URL` exactly matches the backend API URL.
+
 ## 3. Run the frontend
 
 Open a second terminal at the repository root:
@@ -76,6 +168,13 @@ Open a second terminal at the repository root:
 cd frontend
 npm install
 Copy-Item .env.example .env
+npm run dev
+```
+
+After installing the frontend dependencies, you can also start it directly
+from the repository root:
+
+```powershell
 npm run dev
 ```
 
@@ -108,6 +207,9 @@ pytest
 ruff check .
 ```
 
+The final dot in `ruff check .` means "check all Python files in the current
+backend directory."
+
 Build the backend container:
 
 ```powershell
@@ -129,3 +231,42 @@ Deployment instructions are in
 [backend/docs/aws-deployment.md](backend/docs/aws-deployment.md). The
 infrastructure template is
 [backend/infra/production-stack.yaml](backend/infra/production-stack.yaml).
+
+The AWS database connection is established automatically by the production
+stack:
+
+1. Aurora generates its credentials in AWS Secrets Manager.
+2. The private EC2 backend reads those credentials through its IAM role.
+3. EC2 constructs `DATABASE_URL` inside the instance.
+4. The backend container runs `alembic upgrade head`.
+5. FastAPI connects to Aurora over port `5432` inside the VPC.
+6. Amplify calls FastAPI through the HTTPS API domain; Amplify never receives
+   database credentials.
+
+Use custom domains under the same parent domain, for example
+`app.example.com` and `api.example.com`, so the authentication cookie works
+with its current `SameSite=Lax` policy.
+
+## Authentication status
+
+Currently implemented:
+
+- Studio-owner registration
+- Unique email and workspace subdomain checks
+- Argon2 password hashing
+- Login and logout
+- Signed, expiring JWT session in an `HttpOnly` cookie
+- Remember-me behavior
+- Authenticated `/auth/me` endpoint
+- Dashboard route protection
+- Studio-level database isolation
+
+Still required before a public production launch:
+
+- Email verification
+- Password-reset tokens and AWS SES email delivery
+- Login rate limiting and temporary account lockout
+- Session revocation or token-version support
+- Audit logs for authentication and sensitive changes
+- Automated backend integration tests against PostgreSQL
+- Monitoring and alerts for failed login spikes and backend errors

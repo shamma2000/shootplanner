@@ -102,6 +102,7 @@ function SignupPage() {
         phone: r.data.phone,
         password: r.data.password,
       });
+      queryClient.removeQueries({ queryKey: ["workspace"] });
       queryClient.setQueryData(currentUserQuery.queryKey, user);
       toast.success("Your studio workspace is ready!");
       await navigate({ to: "/dashboard" });

@@ -62,7 +62,9 @@ async def register(payload: RegisterRequest, response: Response, db: Database) -
         await db.commit()
     except IntegrityError:
         await db.rollback()
-        raise HTTPException(status_code=409, detail="Email or subdomain is already registered") from None
+        raise HTTPException(
+            status_code=409, detail="Email or subdomain is already registered"
+        ) from None
     await db.refresh(studio)
     await db.refresh(user)
     set_session_cookie(response, create_access_token(user.id))

@@ -44,6 +44,7 @@ function LoginPage() {
     setIsSubmitting(true);
     try {
       const user = await login(email, password, rememberMe);
+      queryClient.removeQueries({ queryKey: ["workspace"] });
       queryClient.setQueryData(currentUserQuery.queryKey, user);
       toast.success("Welcome back!");
       await navigate({ to: "/dashboard" });

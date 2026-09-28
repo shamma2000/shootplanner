@@ -3,6 +3,7 @@ import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import {
   Bell,
   CalendarDays,
+  ChevronRight,
   CircleHelp,
   FileCheck2,
   FileText,
@@ -39,21 +40,6 @@ const secondaryLinks = [
   { label: "Help", to: "/dashboard/help", icon: CircleHelp },
 ] as const;
 
-function Brand({ dark = false }: { dark?: boolean }) {
-  return (
-    <Link to="/" className="flex min-w-0 items-center gap-3">
-      <span className="grid size-10 shrink-0 place-items-center rounded-lg bg-primary text-base font-black text-primary-foreground">
-        SP
-      </span>
-      <span
-        className={`truncate text-lg font-extrabold ${dark ? "text-sidebar-foreground" : "text-foreground"}`}
-      >
-        ShootPlanner<span className="text-primary-strong">.lk</span>
-      </span>
-    </Link>
-  );
-}
-
 function initials(name: string) {
   return name
     .split(" ")
@@ -80,12 +66,15 @@ function SidebarContent({ user, onLogout }: { user: AuthUser; onLogout: () => vo
       );
     });
   return (
-    <div className="flex h-full flex-col bg-sidebar p-4">
-      <Brand dark />
-      <nav className="mt-8 space-y-1">{links(primaryLinks)}</nav>
-      <div className="my-5 h-px bg-sidebar-border" />
-      <nav className="space-y-1">{links(secondaryLinks)}</nav>
-      <div className="mt-auto border-t border-sidebar-border pt-4">
+    <div className="flex h-full flex-col overflow-y-auto bg-sidebar p-4">
+      <Link
+        to="/dashboard"
+        className="border-b border-sidebar-border px-3 pb-6 pt-2 text-lg font-bold break-words text-sidebar-foreground"
+      >
+        {user.studio_name}
+      </Link>
+      <nav className="mt-5 space-y-1">{links(primaryLinks)}</nav>
+      <div className="my-5 border-y border-sidebar-border py-4">
         <div className="mb-4 flex items-center gap-3">
           <div className="grid size-10 shrink-0 place-items-center rounded-full bg-primary-soft font-bold text-primary">
             {initials(user.name)}
@@ -95,6 +84,9 @@ function SidebarContent({ user, onLogout }: { user: AuthUser; onLogout: () => vo
             <p className="truncate text-xs text-sidebar-muted">{user.email}</p>
           </div>
         </div>
+      </div>
+      <nav className="space-y-1">{links(secondaryLinks)}</nav>
+      <div className="mt-auto pt-4">
         <Button
           variant="ghost"
           onClick={onLogout}
@@ -112,12 +104,19 @@ export function AppShell({ children, title }: { children: ReactNode; title: stri
   const { data: user } = useQuery(currentUserQuery);
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const pathname = useRouterState({ select: (state) => state.location.pathname });
+  const pageTitle =
+    [...primaryLinks, ...secondaryLinks].find((item) =>
+      item.to === "/dashboard"
+        ? pathname === item.to || pathname === "/dashboard/"
+        : pathname.startsWith(item.to),
+    )?.label ?? title;
 
   if (!user) return null;
 
   const handleLogout = async () => {
     await logout();
-    queryClient.removeQueries({ queryKey: currentUserQuery.queryKey });
+    queryClient.clear();
     await navigate({ to: "/login", replace: true });
   };
 
@@ -143,17 +142,20 @@ export function AppShell({ children, title }: { children: ReactNode; title: stri
                   </SheetContent>
                 </Sheet>
               </div>
-              <div className="hidden lg:block">
-                <p className="truncate text-sm font-bold text-foreground">{title}</p>
-                <p className="text-xs text-muted-foreground">{user.studio_name}</p>
+              <div className="hidden min-w-0 items-center gap-3 lg:flex">
+                <Link to="/dashboard" className="text-sm text-muted-foreground">
+                  ShootPlanner.lk
+                </Link>
+                <ChevronRight className="size-4 text-muted-foreground" />
+                <p className="truncate text-sm font-bold text-foreground">{pageTitle}</p>
               </div>
-              <div className="lg:hidden">
-                <Brand />
+              <div className="min-w-0 lg:hidden">
+                <p className="truncate text-sm font-bold">{user.studio_name}</p>
               </div>
             </div>
             <div className="flex shrink-0 items-center gap-2">
               <span className="hidden rounded-full bg-primary-soft px-3 py-1.5 text-xs font-bold text-primary-strong sm:inline">
-                7 days left in trial
+                {user.role}
               </span>
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -164,11 +166,19 @@ export function AppShell({ children, title }: { children: ReactNode; title: stri
                     className="relative"
                   >
                     <Bell />
-                    <span className="absolute right-2 top-2 size-2 rounded-full bg-primary" />
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent>Notifications</TooltipContent>
               </Tooltip>
+              <Link
+                to="/dashboard/settings"
+                className="hidden max-w-48 items-center gap-2 border-l border-border pl-3 text-sm sm:flex"
+              >
+                <span className="grid size-8 shrink-0 place-items-center rounded-full bg-primary text-xs font-bold">
+                  {initials(user.name)}
+                </span>
+                <span className="truncate">{user.name}</span>
+              </Link>
             </div>
           </header>
           <main className="mx-auto w-full max-w-[1480px] p-4 md:p-7">{children}</main>
@@ -190,7 +200,7 @@ export function PageIntro({
   action?: ReactNode;
 }) {
   return (
-    <div className="mb-6 grid grid-cols-[minmax(0,1fr)_auto] items-end gap-4">
+    <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
       <div className="min-w-0">
         {eyebrow && (
           <p className="mb-2 text-xs font-extrabold uppercase tracking-[0.16em] text-primary">
