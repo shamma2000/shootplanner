@@ -35,3 +35,29 @@ export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T
 
   return response.json() as Promise<T>;
 }
+
+export async function downloadPdf(path: string, filename: string): Promise<void> {
+  const response = await fetch(`${API_URL}${path}`, {
+    credentials: "include",
+    headers: { Accept: "application/pdf" },
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    const body = (await response.json().catch(() => ({}))) as ApiErrorBody;
+    throw new ApiError(
+      typeof body.detail === "string" ? body.detail : "Unable to download invoice",
+      response.status,
+    );
+  }
+  if (!response.headers.get("content-type")?.includes("application/pdf")) {
+    throw new ApiError("The server did not return a PDF. Please try again.", response.status);
+  }
+  const url = URL.createObjectURL(await response.blob());
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
+}

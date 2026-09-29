@@ -2,13 +2,17 @@ from datetime import UTC, date, datetime, timedelta
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, status
+from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import Response
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.modules.auth.dependencies import CurrentUser, Database
+from app.modules.auth.model import Studio
 from app.modules.clients.model import Client
 from app.modules.events.model import Event
 from app.modules.invoices.model import DeliveryItem, Invoice
+from app.modules.invoices.pdf import invoice_filename, render_invoice_pdf
 from app.modules.invoices.schemas import (
     DeliveryItemRead,
     DeliveryUpdate,
@@ -46,6 +50,35 @@ async def list_invoices(db: Database, current_user: CurrentUser) -> list[Invoice
         .order_by(Invoice.created_at.desc())
     )
     return list(result.unique())
+
+
+@router.get("/{invoice_id}/pdf", response_class=Response)
+async def download_invoice_pdf(
+    invoice_id: UUID, db: Database, current_user: CurrentUser
+) -> Response:
+    result = await db.execute(
+        select(Invoice, Quotation, Event, Client, Studio)
+        .join(Quotation, Invoice.quotation_id == Quotation.id)
+        .join(Event, Quotation.event_id == Event.id)
+        .join(Client, Event.client_id == Client.id)
+        .join(Studio, Client.studio_id == Studio.id)
+        .options(selectinload(Invoice.deliveries), selectinload(Quotation.items))
+        .where(Invoice.id == invoice_id, Studio.id == current_user.studio_id)
+    )
+    row = result.one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    content = await run_in_threadpool(render_invoice_pdf, *row)
+    filename = invoice_filename(row[0].invoice_number)
+    return Response(
+        content,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "private, no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 @router.post("", response_model=InvoiceRead, status_code=status.HTTP_201_CREATED)

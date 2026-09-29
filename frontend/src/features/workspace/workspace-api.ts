@@ -1,5 +1,5 @@
 import { queryOptions } from "@tanstack/react-query";
-import { apiRequest } from "@/lib/api";
+import { apiRequest, downloadPdf } from "@/lib/api";
 
 export type Money = number | string;
 export type EventStatus = "Draft" | "Confirmed" | "Postponed";
@@ -215,6 +215,14 @@ export function updateInvoice(
     method: "PATCH",
     body: JSON.stringify(payload),
   });
+}
+
+export function downloadInvoice(invoice: InvoiceRecord) {
+  const filename = invoice.invoice_number
+    .replace(/[^A-Za-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80);
+  return downloadPdf(`/invoices/${invoice.id}/pdf`, `${filename || "invoice"}.pdf`);
 }
 
 export function updateDelivery(id: string, status: DeliveryStatus, dueDate?: string | null) {

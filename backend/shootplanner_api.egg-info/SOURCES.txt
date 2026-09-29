@@ -25,6 +25,7 @@ app/modules/events/router.py
 app/modules/events/schemas.py
 app/modules/invoices/__init__.py
 app/modules/invoices/model.py
+app/modules/invoices/pdf.py
 app/modules/invoices/router.py
 app/modules/invoices/schemas.py
 app/modules/quotations/__init__.py
@@ -37,3 +38,4 @@ shootplanner_api.egg-info/dependency_links.txt
 shootplanner_api.egg-info/requires.txt
 shootplanner_api.egg-info/top_level.txt
 tests/test_health.py
+tests/test_invoice_pdf.py

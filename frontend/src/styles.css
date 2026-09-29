@@ -461,6 +461,10 @@
   }
 }
 @media (max-width: 767px) {
+  .record-filters > :first-child,
+  .record-filters > button {
+    grid-column: 1 / -1;
+  }
   .calendar-filter-bar {
     grid-template-columns: minmax(0, 1fr);
   }

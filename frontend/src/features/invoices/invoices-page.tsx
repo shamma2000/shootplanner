@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { Download, FileText, Plus, ReceiptText, Save } from "lucide-react";
+import { Download, FileText, LoaderCircle, Plus, ReceiptText, Save } from "lucide-react";
 import { useMemo, useState, type FormEvent } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -12,11 +12,11 @@ import {
   clientDisplayName,
   clientsQuery,
   convertQuotationToInvoice,
+  downloadInvoice,
   eventsQuery,
   invoicesQuery,
   quotationsQuery,
   updateInvoice,
-  type InvoiceRecord,
   type InvoiceStatus,
 } from "@/features/workspace/workspace-api";
 import { ApiError } from "@/lib/api";
@@ -30,6 +30,8 @@ export function InvoicesPage() {
   const queryClient = useQueryClient();
   const [filter, setFilter] = useState(emptyRecordFilter);
   const [showCreate, setShowCreate] = useState(false);
+  const [showDownload, setShowDownload] = useState(false);
+  const [selectedInvoice, setSelectedInvoice] = useState("");
   const [status, setStatus] = useState<InvoiceStatus | "All">("All");
   const clientById = useMemo(
     () => new Map((clients.data ?? []).map((client) => [client.id, client])),
@@ -68,16 +70,33 @@ export function InvoicesPage() {
       )
     );
   });
+  const selectedRecord = filtered.find(({ invoice }) => invoice.id === selectedInvoice)?.invoice;
+  const download = useMutation({
+    mutationFn: downloadInvoice,
+    onSuccess: () => {
+      setShowDownload(false);
+      toast.success("Invoice PDF downloaded");
+    },
+    onError: (error) =>
+      toast.error(error instanceof ApiError ? error.message : "Unable to download invoice"),
+  });
   const save = useMutation({
     mutationFn: (input: {
       id: string;
       advance_paid: number;
       due_date: string;
       status: InvoiceStatus;
-    }) => updateInvoice(input.id, input),
-    onSuccess: async () => {
+      download: boolean;
+    }) =>
+      updateInvoice(input.id, {
+        advance_paid: input.advance_paid,
+        due_date: input.due_date,
+        status: input.status,
+      }),
+    onSuccess: async (invoice, input) => {
       await queryClient.invalidateQueries({ queryKey: ["workspace", "invoices"] });
-      toast.success("Invoice updated");
+      if (input.download) download.mutate(invoice);
+      else toast.success("Invoice updated");
     },
     onError: (error) =>
       toast.error(error instanceof ApiError ? error.message : "Unable to update invoice"),
@@ -85,6 +104,7 @@ export function InvoicesPage() {
   const pending =
     clients.isPending || events.isPending || quotations.isPending || invoices.isPending;
   const failed = clients.isError || events.isError || quotations.isError || invoices.isError;
+  const busy = save.isPending || download.isPending;
   const availableQuotations = (quotations.data ?? []).filter(
     (quotation) => !(invoices.data ?? []).some((invoice) => invoice.quotation_id === quotation.id),
   );
@@ -113,12 +133,13 @@ export function InvoicesPage() {
           </Button>
           <Button
             className="bg-green-600 text-white hover:bg-green-700"
-            onClick={() =>
-              exportInvoices(filtered.map(({ invoice, client }) => ({ invoice, client })))
-            }
-            disabled={filtered.length === 0}
+            onClick={() => {
+              setSelectedInvoice(filtered[0]?.invoice.id ?? "");
+              setShowDownload(true);
+            }}
+            disabled={pending || failed || filtered.length === 0 || busy}
           >
-            <Download /> Export CSV
+            <Download /> Download Invoice
           </Button>
         </div>
       </div>
@@ -152,7 +173,9 @@ export function InvoicesPage() {
         <div className="divide-y divide-border">
           {filtered.map(({ invoice, event, client }) => (
             <form
-              key={invoice.id}
+              key={`${invoice.id}-${invoice.updated_at}-${invoice.advance_paid}-${invoice.status}`}
+              id={`invoice-${invoice.id}`}
+              aria-label={`Invoice ${invoice.invoice_number}`}
               onSubmit={(formEvent) => submitInvoice(formEvent, invoice.id, save.mutate)}
               className="p-5"
             >
@@ -168,12 +191,17 @@ export function InvoicesPage() {
                 <Amount label="Advance paid" value={invoice.advance_paid} />
                 <Amount label="Balance" value={invoice.balance_due} strong />
               </div>
-              <div className="mt-5 grid gap-3 border-t border-border pt-4 sm:grid-cols-[1fr_1fr_170px_auto] sm:items-end">
+              <fieldset
+                disabled={busy}
+                className="mt-5 grid min-w-0 gap-3 border-t border-border pt-4 md:grid-cols-3 md:items-end"
+              >
                 <Field label="Advance paid (LKR)">
                   <Input
                     name="advance_paid"
                     type="number"
                     min="0"
+                    step="0.01"
+                    required
                     max={Number(invoice.amount)}
                     defaultValue={Number(invoice.advance_paid)}
                   />
@@ -188,14 +216,62 @@ export function InvoicesPage() {
                     <option>Overdue</option>
                   </select>
                 </Field>
-                <Button type="submit" variant="outline" disabled={save.isPending}>
-                  <Save /> Save
-                </Button>
-              </div>
+                <div className="flex flex-wrap gap-2 md:col-span-3 md:justify-end">
+                  <Button type="submit" variant="outline">
+                    <Save /> Save
+                  </Button>
+                  <Button type="submit" name="action" value="download">
+                    {busy &&
+                    (save.variables?.id === invoice.id || download.variables?.id === invoice.id) ? (
+                      <LoaderCircle className="animate-spin" />
+                    ) : (
+                      <Download />
+                    )}
+                    Save &amp; download PDF
+                  </Button>
+                </div>
+              </fieldset>
             </form>
           ))}
         </div>
       </section>
+      <Sheet open={showDownload} onOpenChange={setShowDownload}>
+        <SheetContent className="w-full overflow-y-auto sm:max-w-lg">
+          <SheetTitle>Download Invoice</SheetTitle>
+          <SheetDescription>Saved customer invoice</SheetDescription>
+          <label className="mt-6 grid gap-2 text-sm">
+            Invoice
+            <select
+              aria-label="Invoice"
+              value={selectedInvoice}
+              onChange={(event) => setSelectedInvoice(event.target.value)}
+              className="workspace-select"
+              disabled={busy}
+            >
+              {filtered.map(({ invoice, client }) => (
+                <option key={invoice.id} value={invoice.id}>
+                  {invoice.invoice_number} - {clientDisplayName(client)}
+                </option>
+              ))}
+            </select>
+          </label>
+          {selectedRecord && (
+            <div className="mt-6 grid gap-4 border-y border-border py-5">
+              <Amount label="Invoice total" value={selectedRecord.amount} />
+              <Amount label="Advance paid" value={selectedRecord.advance_paid} />
+              <Amount label="Balance due" value={selectedRecord.balance_due} strong />
+            </div>
+          )}
+          <Button
+            className="mt-5"
+            onClick={() => selectedRecord && download.mutate(selectedRecord)}
+            disabled={!selectedRecord || busy}
+          >
+            {busy ? <LoaderCircle className="animate-spin" /> : <Download />}
+            {busy ? "Preparing PDF..." : "Download PDF"}
+          </Button>
+        </SheetContent>
+      </Sheet>
       <Sheet open={showCreate} onOpenChange={setShowCreate}>
         <SheetContent className="w-full overflow-y-auto sm:max-w-lg">
           <SheetTitle>New Invoice</SheetTitle>
@@ -272,6 +348,7 @@ function submitInvoice(
     advance_paid: number;
     due_date: string;
     status: InvoiceStatus;
+    download: boolean;
   }) => void,
 ) {
   event.preventDefault();
@@ -281,6 +358,7 @@ function submitInvoice(
     advance_paid: Number(data.get("advance_paid")),
     due_date: String(data.get("due_date")),
     status: String(data.get("status")) as InvoiceStatus,
+    download: (event.nativeEvent as SubmitEvent).submitter?.getAttribute("value") === "download",
   });
 }
 
@@ -320,32 +398,6 @@ function State({ children, error = false }: { children: string; error?: boolean 
       {children}
     </p>
   );
-}
-
-function exportInvoices(
-  rows: Array<{ invoice: InvoiceRecord; client: Parameters<typeof clientDisplayName>[0] }>,
-) {
-  const values = [
-    ["Invoice", "Client", "Amount", "Advance paid", "Balance", "Due date", "Status"],
-    ...rows.map(({ invoice, client }) => [
-      invoice.invoice_number,
-      clientDisplayName(client),
-      String(invoice.amount),
-      String(invoice.advance_paid),
-      String(invoice.balance_due),
-      invoice.due_date,
-      invoice.status,
-    ]),
-  ];
-  const csv = values
-    .map((row) => row.map((value) => `"${value.replaceAll('"', '""')}"`).join(","))
-    .join("\n");
-  const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = "invoices.csv";
-  link.click();
-  URL.revokeObjectURL(url);
 }
 
 const selectClass =
