@@ -288,3 +288,14 @@ Still required before a public production launch:
 - Audit logs for authentication and sensitive changes
 - Automated backend integration tests against PostgreSQL
 - Monitoring and alerts for failed login spikes and backend errors
+
+``powershell backend
+cd shoot-shine-main
+cd backend
+.\.venv\Scripts\Activate.ps1
+python -m alembic upgrade head
+python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+
+frontend
+cd .\shoot-shine-main\frontend
+npm run dev

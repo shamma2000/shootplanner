@@ -122,7 +122,7 @@ function Page() {
         <Button
           variant="outline"
           onClick={() =>
-            exportCsv(
+            downloadQuotations(
               filtered.map((row) => [
                 clientDisplayName(row.client),
                 row.quotation.package_name ?? "",
@@ -134,7 +134,7 @@ function Page() {
           }
           disabled={filtered.length === 0}
         >
-          <Download /> Export CSV
+          <Download /> Download quotations
         </Button>
       </div>
       {pending && <State>Loading quotations...</State>}
@@ -215,7 +215,7 @@ function showError(error: Error) {
   toast.error(error instanceof ApiError ? error.message : "Unable to update quotation");
 }
 
-function exportCsv(rows: string[][]) {
+function downloadQuotations(rows: string[][]) {
   const values = [["Client", "Package", "Status", "Event date", "Total"], ...rows];
   const csv = values
     .map((row) => row.map((value) => `"${value.replaceAll('"', '""')}"`).join(","))
